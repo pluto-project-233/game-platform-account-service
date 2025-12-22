@@ -3,3 +3,4 @@
  */
 export {health} from "./health";
 export {createAccount} from "./createAccount";
+export {creditPoints} from "./creditPoints";
