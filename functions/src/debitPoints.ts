@@ -1,14 +1,14 @@
 /**
  * Capability: DebitPoints
- * Iteration: 1.4
+ * Iteration: 1.5
  * TSD Reference: account-service.md
  *
  * Rules:
  * - Append-only ledger
  * - DEBIT only
- * - Validate sufficient balance first
+ * - Validate balance using balanceSnapshot (O(1))
  * - Idempotent via referenceId
- * - Atomic operation
+ * - Atomic operation with snapshot decrement
  */
 
 import * as functions from "firebase-functions";
@@ -86,7 +86,7 @@ export const debitPoints = functions.https.onCall(
     const ledgerId = `${accountId}_${data.referenceId}`;
     const ledgerRef = db.collection("ledger").doc(ledgerId);
 
-    // Atomic debit: check balance + write in same transaction
+    // Atomic debit: check snapshot balance + write in same transaction
     try {
       await db.runTransaction(async (tx) => {
         // Check if ledger entry already exists (idempotent)
@@ -96,39 +96,23 @@ export const debitPoints = functions.https.onCall(
           return;
         }
 
-        // Read all ledger entries for account (ordered for determinism)
-        const ledgerSnapshot = await tx.get(
-          db.collection("ledger")
-            .where("accountId", "==", accountId)
-            .orderBy("createdAt", "asc")
-        );
+        // Read account for balanceSnapshot (O(1) instead of ledger scan)
+        const account = await tx.get(accountRef);
+        
+        // Verify account exists inside transaction
+        if (!account.exists) {
+          throw new Error("ACCOUNT_NOT_FOUND");
+        }
 
-        // Compute balance with defensive type narrowing
-        let balance = 0;
-        ledgerSnapshot.forEach((doc) => {
-          const entry = doc.data() as {type?: string; amount?: number};
-
-          // Defensive: skip malformed entries
-          if (typeof entry.amount !== "number") return;
-
-          switch (entry.type) {
-            case "CREDIT":
-              balance += entry.amount;
-              break;
-            case "DEBIT":
-              balance -= entry.amount;
-              break;
-            default:
-              // Defensive: ignore unknown types
-              break;
-          }
-        });
+        const balance = account.data()?.balanceSnapshot ?? 0;
 
         // Validate sufficient balance
         if (balance < data.amount) {
           // Throw plain Error inside transaction (not HttpsError)
           throw new Error("INSUFFICIENT_BALANCE");
         }
+
+        const now = admin.firestore.Timestamp.now();
 
         // Append DEBIT ledger entry
         const ledgerEntry: LedgerEntry = {
@@ -138,10 +122,16 @@ export const debitPoints = functions.https.onCall(
           source: data.source,
           referenceId: data.referenceId,
           amount: data.amount,
-          createdAt: admin.firestore.Timestamp.now(),
+          createdAt: now,
         };
 
         tx.set(ledgerRef, ledgerEntry);
+
+        // Atomically decrement balanceSnapshot
+        tx.update(accountRef, {
+          balanceSnapshot: balance - data.amount,
+          updatedAt: now,
+        });
       });
     } catch (err: any) {
       // Translate plain Error to HttpsError outside transaction
@@ -149,6 +139,12 @@ export const debitPoints = functions.https.onCall(
         throw new functions.https.HttpsError(
           "failed-precondition",
           "Insufficient balance"
+        );
+      }
+      if (err.message === "ACCOUNT_NOT_FOUND") {
+        throw new functions.https.HttpsError(
+          "not-found",
+          "Account not found"
         );
       }
       throw err;

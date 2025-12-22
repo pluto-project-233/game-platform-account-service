@@ -1,6 +1,6 @@
 /**
  * Tests for ValidateBalance
- * Iteration 1.4
+ * Iteration 1.5
  */
 
 import functionsTest from "firebase-functions-test";
@@ -40,16 +40,11 @@ describe("ValidateBalance", () => {
   });
 
   it("✅ Balance = 0 → reject", async () => {
-    // Mock: account exists and is active
-    mockGet
-      .mockResolvedValueOnce({
-        exists: true,
-        data: () => ({accountId: "test-user", status: "ACTIVE"}),
-      })
-      // Mock: no ledger entries (balance = 0)
-      .mockResolvedValueOnce({
-        forEach: jest.fn(),
-      });
+    // Mock: account exists and is active with balanceSnapshot = 0
+    mockGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({accountId: "test-user", status: "ACTIVE", balanceSnapshot: 0}),
+    });
 
     const wrapped = testEnv.wrap(validateBalance);
     const result = await wrapped(
@@ -64,19 +59,11 @@ describe("ValidateBalance", () => {
   });
 
   it("✅ Balance sufficient → allow", async () => {
-    // Mock: account exists and is active
-    mockGet
-      .mockResolvedValueOnce({
-        exists: true,
-        data: () => ({accountId: "test-user", status: "ACTIVE"}),
-      })
-      // Mock: ledger with sufficient balance
-      .mockResolvedValueOnce({
-        forEach: (callback: any) => {
-          callback({data: () => ({type: "CREDIT", amount: 200})});
-          callback({data: () => ({type: "DEBIT", amount: 50})});
-        },
-      });
+    // Mock: account exists and is active with sufficient balanceSnapshot
+    mockGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({accountId: "test-user", status: "ACTIVE", balanceSnapshot: 150}),
+    });
 
     const wrapped = testEnv.wrap(validateBalance);
     const result = await wrapped(

@@ -1,12 +1,11 @@
 /**
  * Capability: ValidateBalance
- * Iteration: 1.4
+ * Iteration: 1.5
  * TSD Reference: account-service.md
  *
  * Rules:
- * - Balance is derived from ledger
- * - CREDIT increases balance
- * - DEBIT decreases balance
+ * - Balance read from balanceSnapshot (O(1))
+ * - No ledger access required
  * - No writes allowed
  */
 
@@ -55,33 +54,8 @@ export const validateBalance = functions.https.onCall(
       );
     }
 
-    // Fetch all ledger entries for account (ordered for determinism)
-    const ledgerSnapshot = await db
-      .collection("ledger")
-      .where("accountId", "==", accountId)
-      .orderBy("createdAt", "asc")
-      .get();
-
-    // Compute balance from ledger with defensive type narrowing
-    let balance = 0;
-    ledgerSnapshot.forEach((doc) => {
-      const entry = doc.data() as {type?: string; amount?: number};
-
-      // Defensive: skip malformed entries
-      if (typeof entry.amount !== "number") return;
-
-      switch (entry.type) {
-        case "CREDIT":
-          balance += entry.amount;
-          break;
-        case "DEBIT":
-          balance -= entry.amount;
-          break;
-        default:
-          // Defensive: ignore unknown types
-          break;
-      }
-    });
+    // Read balanceSnapshot (O(1) instead of ledger scan)
+    const balance = accountSnapshot.data()?.balanceSnapshot ?? 0;
 
     // Compare with requested amount
     const allowed = balance >= data.amount;

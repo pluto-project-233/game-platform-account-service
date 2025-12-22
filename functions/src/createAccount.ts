@@ -1,13 +1,13 @@
 /**
  * Capability: CreateAccount
- * Iteration: 1.2
+ * Iteration: 1.5
  * TSD Reference: account-service.md
  *
  * Rules:
  * - accountId == Firebase Auth UID
  * - Idempotent
  * - No ledger write
- * - No balance field
+ * - balanceSnapshot initialized to 0
  */
 
 import * as functions from "firebase-functions";
@@ -17,7 +17,9 @@ import {db} from "./firebase";
 interface Account {
   accountId: string;
   status: "ACTIVE" | "SUSPENDED";
+  balanceSnapshot: number;
   createdAt: admin.firestore.Timestamp;
+  updatedAt: admin.firestore.Timestamp;
 }
 
 function toAccountResponse(account: Account) {
@@ -49,7 +51,9 @@ export const createAccount = functions.https.onCall(async (data, context) => {
   const newAccount: Account = {
     accountId,
     status: "ACTIVE",
+    balanceSnapshot: 0,
     createdAt: admin.firestore.Timestamp.now(),
+    updatedAt: admin.firestore.Timestamp.now(),
   };
 
   await accountRef.set(newAccount);

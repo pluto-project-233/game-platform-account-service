@@ -1,6 +1,6 @@
 /**
  * Tests for CreditPoints
- * Iteration 1.3
+ * Iteration 1.5
  */
 
 import functionsTest from "firebase-functions-test";
@@ -45,8 +45,16 @@ describe("CreditPoints", () => {
     // Mock transaction
     mockRunTransaction.mockImplementation(async (updateFunction) => {
       const mockTx = {
-        get: jest.fn().mockResolvedValue({exists: false}),
+        get: jest.fn()
+          // First call: ledger entry does not exist
+          .mockResolvedValueOnce({exists: false})
+          // Second call: account exists
+          .mockResolvedValueOnce({
+            exists: true,
+            data: () => ({balanceSnapshot: 0}),
+          }),
         set: mockSet,
+        update: jest.fn(),
       };
       await updateFunction(mockTx);
     });
@@ -188,8 +196,11 @@ describe("CreditPoints", () => {
     // Mock transaction: ledger entry already exists
     mockRunTransaction.mockImplementation(async (updateFunction) => {
       const mockTx = {
-        get: jest.fn().mockResolvedValue({exists: true}),
+        get: jest.fn()
+          // First call: ledger entry exists (idempotent)
+          .mockResolvedValueOnce({exists: true}),
         set: mockSet,
+        update: jest.fn(),
       };
       await updateFunction(mockTx);
     });

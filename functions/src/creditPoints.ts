@@ -1,13 +1,13 @@
 /**
  * Capability: CreditPoints
- * Iteration: 1.3
+ * Iteration: 1.5
  * TSD Reference: account-service.md
  *
  * Rules:
  * - Append-only ledger
  * - CREDIT only
  * - Idempotent via referenceId
- * - No balance calculation
+ * - Atomically increments balanceSnapshot
  * - Cannot credit suspended accounts
  * - Deterministic ledgerId = ${accountId}_${referenceId}
  */
@@ -87,26 +87,51 @@ export const creditPoints = functions.https.onCall(
     const ledgerId = `${accountId}_${data.referenceId}`;
     const ledgerRef = db.collection("ledger").doc(ledgerId);
 
-    // Atomic idempotent credit
-    await db.runTransaction(async (tx) => {
-      const existing = await tx.get(ledgerRef);
-      if (existing.exists) {
-        // Idempotent no-op
-        return;
+    // Atomic idempotent credit + snapshot increment
+    try {
+      await db.runTransaction(async (tx) => {
+        const existing = await tx.get(ledgerRef);
+        if (existing.exists) {
+          // Idempotent no-op
+          return;
+        }
+
+        // Verify account exists inside transaction
+        const accountSnap = await tx.get(accountRef);
+        if (!accountSnap.exists) {
+          throw new Error("ACCOUNT_NOT_FOUND");
+        }
+
+        const now = admin.firestore.Timestamp.now();
+
+        const ledgerEntry: LedgerEntry = {
+          ledgerId,
+          accountId,
+          type: "CREDIT",
+          source: data.source,
+          referenceId: data.referenceId,
+          amount: data.amount,
+          createdAt: now,
+        };
+
+        tx.set(ledgerRef, ledgerEntry);
+
+        // Atomically increment balanceSnapshot
+        tx.update(accountRef, {
+          balanceSnapshot: admin.firestore.FieldValue.increment(data.amount),
+          updatedAt: now,
+        });
+      });
+    } catch (err: any) {
+      // Translate plain Error to HttpsError outside transaction
+      if (err.message === "ACCOUNT_NOT_FOUND") {
+        throw new functions.https.HttpsError(
+          "not-found",
+          "Account not found"
+        );
       }
-
-      const ledgerEntry: LedgerEntry = {
-        ledgerId,
-        accountId,
-        type: "CREDIT",
-        source: data.source,
-        referenceId: data.referenceId,
-        amount: data.amount,
-        createdAt: admin.firestore.Timestamp.now(),
-      };
-
-      tx.set(ledgerRef, ledgerEntry);
-    });
+      throw err;
+    }
 
     return {status: "OK"};
   }

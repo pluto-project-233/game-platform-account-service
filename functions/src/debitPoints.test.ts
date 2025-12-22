@@ -1,6 +1,6 @@
 /**
  * Tests for DebitPoints
- * Iteration 1.4
+ * Iteration 1.5
  */
 
 import functionsTest from "firebase-functions-test";
@@ -55,13 +55,13 @@ describe("DebitPoints", () => {
         get: jest.fn()
           // Mock: ledger entry does not exist
           .mockResolvedValueOnce({exists: false})
-          // Mock: ledger with sufficient balance
+          // Mock: account exists with balanceSnapshot
           .mockResolvedValueOnce({
-            forEach: (callback: any) => {
-              callback({data: () => ({type: "CREDIT", amount: 200})});
-            },
+            exists: true,
+            data: () => ({balanceSnapshot: 200}),
           }),
         set: mockSet,
+        update: jest.fn(),
       };
       await updateFunction(mockTx);
     });
@@ -94,13 +94,13 @@ describe("DebitPoints", () => {
         get: jest.fn()
           // Mock: ledger entry does not exist
           .mockResolvedValueOnce({exists: false})
-          // Mock: ledger with insufficient balance
+          // Mock: account exists with insufficient balance
           .mockResolvedValueOnce({
-            forEach: (callback: any) => {
-              callback({data: () => ({type: "CREDIT", amount: 50})});
-            },
+            exists: true,
+            data: () => ({balanceSnapshot: 50}),
           }),
         set: mockSet,
+        update: jest.fn(),
       };
       await updateFunction(mockTx);
     });
@@ -129,8 +129,11 @@ describe("DebitPoints", () => {
     // Mock transaction: ledger entry already exists
     mockRunTransaction.mockImplementation(async (updateFunction) => {
       const mockTx = {
-        get: jest.fn().mockResolvedValueOnce({exists: true}),
+        get: jest.fn()
+          // First call: ledger entry exists (idempotent no-op)
+          .mockResolvedValueOnce({exists: true}),
         set: mockSet,
+        update: jest.fn(),
       };
       await updateFunction(mockTx);
     });
